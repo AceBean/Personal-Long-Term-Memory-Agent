@@ -28,6 +28,10 @@ python memory_agent_app.py summarize --limit 10
 ### Environment
 
 - **Python:** 3.9+ (tested with Python 3.11)
+<<<<<<< HEAD
+- **Conda:** 23.0+ (optional, tested with Miniconda/Anaconda 23.11)
+=======
+>>>>>>> master
 - **Dependencies:** Uses only the Python standard library; no third-party packages are required.
 
 ### Installation
@@ -37,10 +41,21 @@ python memory_agent_app.py summarize --limit 10
 git clone https://github.com/MarkMoHR/Awesome-Edge-Detection-Papers.git
 cd Awesome-Edge-Detection-Papers
 
+<<<<<<< HEAD
+# (Optional) create and activate a virtual environment (venv)
+python3 -m venv .venv
+source .venv/bin/activate
+
+# (Optional) create and activate a conda environment
+conda create -n memory-agent python=3.11
+conda activate memory-agent
+
+=======
 # (Optional) create and activate a virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
 
+>>>>>>> master
 # Run the CLI
 python memory_agent_app.py --help
 ```
