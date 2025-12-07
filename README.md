@@ -86,7 +86,7 @@ The system retrieves relevant **text, images, videos, and audio** together.
 # 📦 Installation
 
 ```bash
-git clone <repo>
+git clone git@github.com:AceBean/personal-long-term-memory-agent.git
 cd Personal-Long-Term-Memory-Agent
 pip install -r requirements.txt
 ```
