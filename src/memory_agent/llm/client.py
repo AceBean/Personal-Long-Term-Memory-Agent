@@ -7,9 +7,8 @@ from typing import List, Tuple
 import whisper
 
 # 兼容 OpenAI API 的 DashScope
-api_key = "sk-249bef7cbed5492294eb70ba9f3a3de1"
 client = OpenAI(
-    api_key=api_key,
+    api_key=os.getenv("DASHSCOPE_API_KEY"),
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
 )
 
