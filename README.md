@@ -137,7 +137,7 @@ Files are automatically classified by type.
 # 🏗 Build Memory Index
 
 ```bash
-python -m memory_agent.cli.cli_qwen index \
+python -m memory_agent.cli.cli index \
     --root ./memory_data \
     --out memory_index.pt
 ```
@@ -175,7 +175,7 @@ The Web UI provides:
 ### Semantic search:
 
 ```bash
-python -m memory_agent.cli.cli_qwen search \
+python -m memory_agent.cli.cli search \
     --index memory_index.pt \
     --query "beach trip"
 ```
@@ -183,7 +183,7 @@ python -m memory_agent.cli.cli_qwen search \
 ### RAG question answering:
 
 ```bash
-python -m memory_agent.cli.cli_qwen qa \
+python -m memory_agent.cli.cli qa \
     --index memory_index.pt \
     --query "Summarize all my work meetings."
 ```
@@ -247,7 +247,7 @@ src/memory_agent/
         local_whisper.py
 
     cli/
-        cli_qwen.py
+        cli.py
 
     web/
         app.py

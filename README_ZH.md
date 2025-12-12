@@ -133,7 +133,7 @@ memory_data/
 # 🏗 Build Memory Index | 构建记忆索引
 
 ```bash
-python -m memory_agent.cli.cli_qwen index \
+python -m memory_agent.cli.cli index \
     --root ./memory_data \
     --out memory_index.pt
 ```
@@ -170,7 +170,7 @@ streamlit run src/memory_agent/web/app.py
 ### 搜索：
 
 ```bash
-python -m memory_agent.cli.cli_qwen search \
+python -m memory_agent.cli.cli search \
     --index memory_index.pt \
     --query "海边的内容"
 ```
@@ -178,7 +178,7 @@ python -m memory_agent.cli.cli_qwen search \
 ### RAG 问答：
 
 ```bash
-python -m memory_agent.cli.cli_qwen qa \
+python -m memory_agent.cli.cli qa \
     --index memory_index.pt \
     --query "总结我所有的旅行经历"
 ```
@@ -246,7 +246,7 @@ src/memory_agent/
         local_whisper.py       ← Whisper ASR
 
     cli/
-        cli_qwen.py
+        cli.py
 
     web/
         app.py

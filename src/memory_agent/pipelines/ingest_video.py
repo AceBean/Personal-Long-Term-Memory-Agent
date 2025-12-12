@@ -1,103 +1,3 @@
-# import os
-# import cv2
-# import torch
-# from PIL import Image
-# from scenedetect import VideoManager, SceneManager
-# from scenedetect.detectors import ContentDetector
-
-# from memory_agent.models.memory_item import MemoryItem
-# from memory_agent.config import CACHE_DIR
-# from memory_agent.utils import file_mtime
-# from memory_agent.llm.client import qwen_caption_image, qwen_embed_text
-
-
-# def detect_scenes(video_path):
-#     vm = VideoManager([video_path])
-#     sm = SceneManager()
-#     sm.add_detector(ContentDetector(threshold=27))
-#     vm.start()
-#     sm.detect_scenes(frame_source=vm)
-#     scenes = sm.get_scene_list()
-#     return [(s[0].get_seconds(), s[1].get_seconds()) for s in scenes]
-
-
-# def extract_frame(path, sec):
-#     cap = cv2.VideoCapture(path)
-#     cap.set(cv2.CAP_PROP_POS_MSEC, sec * 1000)
-#     ret, frame = cap.read()
-#     if not ret:
-#         return None
-#     img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-#     return Image.fromarray(img)
-
-
-# def ingest_video_qwen(index, path: str):
-#     scenes = detect_scenes(path)
-#     parent_id = len(index.items)
-
-#     parent = MemoryItem(
-#         id=parent_id,
-#         path=path,
-#         modality="video",
-#         timestamp=file_mtime(path),
-#         preview_text="[视频摘要生成中]",
-#         meta={"scenes": []}
-#     )
-
-#     all_items = [parent]
-#     scene_embeddings = []
-
-#     captions = []
-
-#     for i, (start, end) in enumerate(scenes):
-#         mid = (start + end) / 2
-#         img = extract_frame(path, mid)
-#         if img is None:
-#             continue
-
-#         # 保存关键帧
-#         os.makedirs(CACHE_DIR, exist_ok=True)
-#         kpath = os.path.join(CACHE_DIR, f"{parent_id}_scene_{i}.jpg")
-#         img.save(kpath)
-
-#         # Caption
-#         caption = qwen_caption_image(img)
-#         captions.append(caption)
-
-#         # Embedding
-#         emb = qwen_embed_text(caption)
-#         emb = torch.tensor(emb, dtype=torch.float32).unsqueeze(0)
-#         scene_embeddings.append(emb)
-
-#         child = MemoryItem(
-#             id=parent_id + 1 + i,
-#             path=f"{path}#scene-{i}",
-#             modality="video_scene",
-#             timestamp=file_mtime(path),
-#             preview_text=caption[:80],
-#             meta={
-#                 "parent_id": parent_id,
-#                 "start_sec": start,
-#                 "end_sec": end,
-#                 "keyframe_path": kpath
-#             }
-#         )
-
-#         parent.meta["scenes"].append(child.id)
-#         all_items.append(child)
-
-#     # 父节点 embedding = 所有场景 embedding 平均
-#     if scene_embeddings:
-#         parent_emb = torch.stack(scene_embeddings).mean(dim=0)
-#         parent.preview_text = " | ".join(captions[:3])
-#         parent.meta["summary"] = "\n".join(captions)
-#     else:
-#         parent_emb = torch.zeros((1, 1024))
-
-#     all_vecs = [parent_emb] + scene_embeddings
-#     return all_items, torch.cat(all_vecs, dim=0)
-
-
 import os
 import cv2
 import torch
@@ -111,6 +11,9 @@ from memory_agent.llm.client import (
     summarize_text_one_sentence,
     summarize_video_segment
 )
+from scenedetect import VideoManager, SceneManager
+from scenedetect.detectors import ContentDetector
+
 
 # 可选依赖：OCR & YOLO。没有的话会自动降级。
 try:
@@ -148,47 +51,72 @@ def get_sampling_strategy(video_seconds: float):
 # ------------------------------------------------------------
 # 2. 关键帧提取（含数量限制）
 # ------------------------------------------------------------
-def extract_keyframes_adaptive(path: str):
+def detect_scenes(video_path: str, threshold: float = 27.0):
+    """
+    使用 PySceneDetect 做场景切分，返回 [(start_sec, end_sec), ...]
+    threshold 越大越不敏感（切分更少），越小切分更多。
+    """
+    vm = VideoManager([video_path])
+    sm = SceneManager()
+    sm.add_detector(ContentDetector(threshold=threshold))
+    vm.start()
+    sm.detect_scenes(frame_source=vm)
+    scenes = sm.get_scene_list()
+    # scenes: List[Tuple[FrameTimecode, FrameTimecode]]
+    return [(s[0].get_seconds(), s[1].get_seconds()) for s in scenes]
+
+
+def extract_frame_at_second(path: str, sec: float):
+    """
+    在视频 sec 秒处取一帧，返回 PIL.Image 或 None
+    """
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
-        raise RuntimeError(f"无法打开视频：{path}")
+        return None
+    cap.set(cv2.CAP_PROP_POS_MSEC, sec * 1000.0)
+    ret, frame = cap.read()
+    cap.release()
+    if not ret:
+        return None
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    return Image.fromarray(frame_rgb)
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if fps <= 0:
-        fps = 30
 
-    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-    video_seconds = frame_count / fps if frame_count > 0 else 0.0
+def extract_keyframes_scenecut(path: str,
+                              threshold: float = 27.0,
+                              max_scenes: int = 30):
+    """
+    用 SceneDetect 替换原来的 extract_keyframes_adaptive：
+    - 先切场景
+    - 每个场景取中间帧作为关键帧
+    - 限制最多取 max_scenes 个（防止视频切得太碎导致调用太多）
+    返回: List[(ts, out_path, img, start_sec, end_sec)]
+    """
+    scenes = detect_scenes(path, threshold=threshold)
+    if not scenes:
+        return []
 
-    interval_sec, max_frames = get_sampling_strategy(video_seconds)
-    frame_interval = max(1, int(interval_sec * fps))
+    # 如果场景太多：均匀采样压缩到 max_scenes
+    if len(scenes) > max_scenes:
+        idxs = [int(i * len(scenes) / max_scenes) for i in range(max_scenes)]
+        scenes = [scenes[i] for i in idxs]
 
     save_dir = os.path.join(os.path.dirname(path), ".keyframes")
     os.makedirs(save_dir, exist_ok=True)
 
     keyframes = []
-    i = 0
-    saved = 0
+    for i, (start, end) in enumerate(scenes):
+        mid = (start + end) / 2.0
+        img = extract_frame_at_second(path, mid)
+        if img is None:
+            continue
 
-    while True:
-        ret, frame = cap.read()
-        if not ret or saved >= max_frames:
-            break
+        out_path = os.path.join(save_dir, f"{os.path.basename(path)}_scene_{i}.jpg")
+        img.save(out_path)
 
-        if i % frame_interval == 0:
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            img = Image.fromarray(frame_rgb)
+        # 返回 mid 作为 timestamp，且额外带上 scene 起止时间
+        keyframes.append((mid, out_path, img, start, end))
 
-            out_path = os.path.join(save_dir, f"{os.path.basename(path)}_kf_{i}.jpg")
-            img.save(out_path)
-
-            ts = i / fps
-            keyframes.append((ts, out_path, img))
-            saved += 1
-
-        i += 1
-
-    cap.release()
     return keyframes
 
 
@@ -244,18 +172,27 @@ def run_yolo_on_image(img: Image.Image, conf_thres: float = 0.35):
 # ------------------------------------------------------------
 def build_timeline_summary(keyframes, captions):
     """
-    构造视频时间线摘要文本（00:00 → xxx）
+    优先使用 scene 的 (start_sec, end_sec) 构造时间线；
+    若不存在则退化为单点 timestamp。
     """
     lines = []
-    for (ts, _, _), cap in zip(keyframes, captions):
-        mm = int(ts // 60)
-        ss = int(ts % 60)
-        t = f"{mm:02d}:{ss:02d}"
+    for kf, cap in zip(keyframes, captions):
+        # kf 可能是 3 元组或 5 元组
+        if len(kf) >= 5:
+            ts, _, _, start, end = kf
+            mm_s, ss_s = divmod(int(start), 60)
+            mm_e, ss_e = divmod(int(end), 60)
+            t = f"{mm_s:02d}:{ss_s:02d}-{mm_e:02d}:{ss_e:02d}"
+        else:
+            ts, _, _ = kf
+            mm, ss = divmod(int(ts), 60)
+            t = f"{mm:02d}:{ss:02d}"
+
         lines.append(f"{t} → {cap}")
 
     timeline = "\n".join(lines)
     summary_of_timeline = summarize_text_one_sentence(
-        "下面是视频关键帧时间线：\n" + timeline
+        "下面是视频时间线（按场景切分）:\n" + timeline
     )
     return timeline, summary_of_timeline
 
@@ -334,7 +271,7 @@ def ingest_video_qwen(index, path: str):
     """
 
     # 1) 自适应关键帧提取
-    keyframes = extract_keyframes_adaptive(path)
+    keyframes = extract_keyframes_scenecut(path, threshold=27.0, max_scenes=30)
 
     if not keyframes:
         from memory_agent.llm.client import qwen_embed_text
@@ -362,7 +299,7 @@ def ingest_video_qwen(index, path: str):
     captions = []
     kf_meta = []
 
-    for ts, frame_path, img in keyframes:
+    for ts, frame_path, img, start_sec, end_sec in keyframes:
         caption = qwen_caption_image(img)
         ocr_text = run_ocr_on_image(img)
         objects = run_yolo_on_image(img)
@@ -375,7 +312,10 @@ def ingest_video_qwen(index, path: str):
             "caption": caption,
             "ocr_text": ocr_text,
             "objects": objects,
+            "start_sec": start_sec,
+            "end_sec": end_sec,
         })
+
 
     # 3) 时间线 + 时间线摘要
     timeline_text, timeline_summary = build_timeline_summary(keyframes, captions)

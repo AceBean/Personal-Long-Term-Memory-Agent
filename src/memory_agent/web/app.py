@@ -190,7 +190,7 @@ llm_model = st.sidebar.text_input(
     value="qwen-flash",  # 这里建议你换成自己实际可用的模型名
 )
 
-top_k = st.sidebar.slider("检索 top-k 父节点", 3, 20, 8)
+top_k = st.sidebar.slider("检索 top-k 父节点", 3, 20, 6)
 max_children = st.sidebar.slider("每个父节点展示子节点数量", 1, 10, 3)
 
 st.sidebar.markdown("---")
